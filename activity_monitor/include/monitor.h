@@ -7,6 +7,7 @@
 #include <unordered_map>
 #include <chrono>
 #include <signal.h>
+#include <fstream>
 
 // Configuration structure for the activity monitor
 struct MonitorConfig {
@@ -14,6 +15,8 @@ struct MonitorConfig {
     float cpu_threshold = 80.0f; // CPU threshold for alerts (%)
     bool show_alert = true;      // Whether to show CPU threshold alerts
     bool system_notifications = true; // Whether to show system desktop notifications
+    bool debug_mode = false;     // Enable debug output
+    bool debug_only_mode = false; // Run in debug-only mode (no UI)
 };
 
 // Represents a single process
@@ -22,7 +25,6 @@ struct Process {
     std::string name;         // Process name
     float cpu_percent;        // CPU usage (%)
     float mem_percent;        // Memory usage (%)
-    std::string status;       // Process status (running, sleeping, etc.)
     
     // For sorting processes
     bool operator<(const Process& other) const {
@@ -77,6 +79,14 @@ struct MemoryInfo {
     unsigned long swap_free;
     unsigned long swap_used;
     float swap_percent_used;
+    
+    // Cache information
+    unsigned long cached;     // Cached memory (KB)
+    unsigned long buffers;    // Buffer memory (KB)
+    float cache_hit_rate;     // Cache hit rate (%)
+    
+    // Latency information
+    float latency_ns;         // Memory access latency in nanoseconds
 };
 
 // Represents disk information for each partition
@@ -87,15 +97,10 @@ struct DiskInfo {
     unsigned long free_space;     // Free space (KB)
     unsigned long used_space;     // Used space (KB)
     float percent_used;           // Percentage of space used
-};
-
-// Represents network interface information
-struct NetworkInfo {
-    std::string interface;    // Interface name (e.g., eth0)
-    unsigned long rx_bytes;   // Received bytes
-    unsigned long tx_bytes;   // Transmitted bytes
-    double rx_speed;          // Download speed (Bytes/s)
-    double tx_speed;          // Upload speed (Bytes/s)
+    
+    // I/O and latency metrics
+    float read_latency_ms;        // Read latency in milliseconds
+    unsigned long io_operations;  // Number of I/O operations since boot
 };
 
 // Main activity monitor class
@@ -107,14 +112,12 @@ private:
     CPUInfo cpu_info;
     MemoryInfo memory_info;
     std::vector<DiskInfo> disk_info;
-    std::vector<NetworkInfo> network_info;
     std::vector<Process> processes;
     
     // Ncurses windows for different sections
     WINDOW *cpu_win;
     WINDOW *mem_win;
     WINDOW *disk_win;
-    WINDOW *network_win;
     WINDOW *process_win;
     WINDOW *alert_win;
     WINDOW *confirm_win;      // Window for confirmation dialog
@@ -122,7 +125,9 @@ private:
     // For calculating CPU and network usage
     std::vector<CPUTimeInfo> prev_cpu_times;
     std::vector<CPUTimeInfo> curr_cpu_times;
-    std::unordered_map<std::string, std::pair<unsigned long, unsigned long>> prev_net_stats;
+    
+    // For calculating disk I/O stats
+    std::unordered_map<std::string, std::pair<unsigned long, unsigned long>> prev_disk_stats;
     
     // For process list navigation
     int process_list_offset = 0;
@@ -139,23 +144,29 @@ private:
     bool warning_state = false;      // True if currently in warning state
     bool pre_warning_state = false;  // True if currently in pre-warning state
     
+    // Debug output file
+    std::ofstream debug_file;
+    
     // Private member functions
     void initializeWindows();
     void resizeWindows();
     void collectData();
     
+    // Debug log method
+    void debugLog(const std::string& message);
+    
     // Data collection methods
     void updateCPUInfo();
     void updateMemoryInfo();
     void updateDiskInfo();
-    void updateNetworkInfo();
     void updateProcessInfo();
+    void updateMemoryStats();
+    void updateDiskLatency();
     
     // Display methods
     void displayCPUInfo();
     void displayMemoryInfo();
     void displayDiskInfo();
-    void displayNetworkInfo();
     void displayProcessInfo();
     void displayAlert();
     bool displayConfirmationDialog(const std::string& message);
@@ -170,8 +181,8 @@ private:
     
     // Helper methods
     std::string formatSize(unsigned long size_kb);
-    std::string formatSpeed(double bytes_per_sec);
     std::string createBar(float percent, int width, bool use_color = true);
+    std::string formatLatency(float latency, bool is_memory = false);
 
 public:
     ActivityMonitor();
@@ -182,6 +193,9 @@ public:
     
     // Main loop
     void run();
+    
+    // Debug-only mode (no UI)
+    void runDebugMode();
     
     // Handle user input
     void handleInput(int ch);

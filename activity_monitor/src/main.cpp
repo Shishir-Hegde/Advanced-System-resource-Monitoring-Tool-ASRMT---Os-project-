@@ -10,6 +10,8 @@ void printUsage(const char* programName) {
               << "  -t, --threshold=PERCENT  Set CPU threshold for alerts (default: 80.0)\n"
               << "  -a, --no-alert           Disable CPU threshold alerts\n"
               << "  -n, --no-notify          Disable system desktop notifications\n"
+              << "  -d, --debug              Enable debug output\n"
+              << "  -o, --debug-only         Run in debug-only mode (no UI)\n"
               << "  -h, --help               Display this help and exit\n"
               << std::endl;
 }
@@ -23,6 +25,8 @@ int main(int argc, char* argv[]) {
         {"threshold",    required_argument, 0, 't'},
         {"no-alert",     no_argument,       0, 'a'},
         {"no-notify",    no_argument,       0, 'n'},
+        {"debug",        no_argument,       0, 'd'},
+        {"debug-only",   no_argument,       0, 'o'},
         {"help",         no_argument,       0, 'h'},
         {0, 0, 0, 0}
     };
@@ -31,7 +35,7 @@ int main(int argc, char* argv[]) {
     int opt;
     int option_index = 0;
     
-    while ((opt = getopt_long(argc, argv, "r:t:anh", long_options, &option_index)) != -1) {
+    while ((opt = getopt_long(argc, argv, "r:t:andoh", long_options, &option_index)) != -1) {
         switch (opt) {
             case 'r':
                 config.refresh_rate_ms = std::stoi(optarg);
@@ -53,6 +57,13 @@ int main(int argc, char* argv[]) {
             case 'n':
                 config.system_notifications = false;
                 break;
+            case 'd':
+                config.debug_mode = true;
+                break;
+            case 'o':
+                config.debug_mode = true;     // Debug-only mode implies debug mode
+                config.debug_only_mode = true;
+                break;
             case 'h':
                 printUsage(argv[0]);
                 return 0;
@@ -68,10 +79,18 @@ int main(int argc, char* argv[]) {
         monitor.setConfig(config);
         
         // Run the monitor
-        monitor.run();
+        if (config.debug_only_mode) {
+            // Skip ncurses initialization in debug-only mode
+            monitor.runDebugMode();
+        } else {
+            // Run regular UI mode
+            monitor.run();
+        }
     } catch (const std::exception& e) {
         // Make sure we exit ncurses mode before displaying any errors
-        endwin();
+        if (!config.debug_only_mode) {
+            endwin();
+        }
         std::cerr << "Error: " << e.what() << std::endl;
         return 1;
     }

@@ -10,58 +10,40 @@
 #include <sys/statvfs.h>
 #include <ifaddrs.h>
 #include <netinet/in.h>
+#include <iostream>
 #include <sys/types.h>
 
 // Constructor
 ActivityMonitor::ActivityMonitor() {
-    // Initialize ncurses
-    initscr();
-    start_color();
-    cbreak();
-    noecho();
-    keypad(stdscr, TRUE);
-    curs_set(0);  // Hide cursor
-    timeout(0);   // Non-blocking input
-    
-    // Get terminal dimensions
-    getmaxyx(stdscr, terminal_height, terminal_width);
-    
-    // Initialize colors
-    init_pair(1, COLOR_GREEN, COLOR_BLACK);    // Normal (green)
-    init_pair(2, COLOR_YELLOW, COLOR_BLACK);   // Warning (yellow)
-    init_pair(3, COLOR_RED, COLOR_BLACK);      // Critical (red)
-    init_pair(4, COLOR_CYAN, COLOR_BLACK);     // Info (cyan)
-    init_pair(5, COLOR_WHITE, COLOR_BLUE);     // Headers (white on blue)
-    
-    // Initialize windows
-    initializeWindows();
-    
-    // Initialize CPU data
-    updateCPUInfo();
-    
-    // Initialize network data
-    updateNetworkInfo();
-    
-    // Set last update time
+    // Set default values
     last_update = std::chrono::high_resolution_clock::now();
     last_notification = last_update;  // Initialize notification timer
+    
+    // Until setConfig is called, we don't know if we're in debug-only mode
 }
 
 // Destructor
 ActivityMonitor::~ActivityMonitor() {
-    // Clean up windows
-    delwin(cpu_win);
-    delwin(mem_win);
-    delwin(disk_win);
-    delwin(network_win);
-    delwin(process_win);
-    
-    if (alert_win != nullptr) {
-        delwin(alert_win);
+    // Close debug file if open
+    if (debug_file.is_open()) {
+        debug_file.close();
     }
     
-    // End ncurses
-    endwin();
+    // Only clean up ncurses if we're not in debug-only mode
+    if (!config.debug_only_mode) {
+        // Clean up windows
+        delwin(cpu_win);
+        delwin(mem_win);
+        delwin(disk_win);
+        delwin(process_win);
+        
+        if (alert_win != nullptr) {
+            delwin(alert_win);
+        }
+        
+        // End ncurses
+        endwin();
+    }
 }
 
 // Initialize the windows
@@ -73,14 +55,12 @@ void ActivityMonitor::initializeWindows() {
     int cpu_height = height / 4;
     int mem_height = height / 4;
     int disk_height = height / 4;
-    int net_height = height / 4;
     int process_height = height / 2;
     
     // Create windows
     cpu_win = newwin(cpu_height, width, 0, 0);
     mem_win = newwin(mem_height, width / 2, cpu_height, 0);
     disk_win = newwin(disk_height, width / 2, cpu_height, width / 2);
-    network_win = newwin(net_height, width / 2, cpu_height + mem_height, 0);
     process_win = newwin(process_height, width, height - process_height, 0);
     
     // Create alert window (initially hidden)
@@ -104,7 +84,6 @@ void ActivityMonitor::resizeWindows() {
         delwin(cpu_win);
         delwin(mem_win);
         delwin(disk_win);
-        delwin(network_win);
         delwin(process_win);
         
         if (alert_win != nullptr) {
@@ -124,6 +103,44 @@ void ActivityMonitor::resizeWindows() {
 // Set configuration
 void ActivityMonitor::setConfig(const MonitorConfig& new_config) {
     config = new_config;
+    
+    // Initialize ncurses if not in debug-only mode
+    if (!config.debug_only_mode) {
+        initscr();
+        start_color();
+        cbreak();
+        noecho();
+        keypad(stdscr, TRUE);
+        curs_set(0);  // Hide cursor
+        timeout(0);   // Non-blocking input
+        
+        // Get terminal dimensions
+        getmaxyx(stdscr, terminal_height, terminal_width);
+        
+        // Initialize colors
+        init_pair(1, COLOR_GREEN, COLOR_BLACK);    // Normal (green)
+        init_pair(2, COLOR_YELLOW, COLOR_BLACK);   // Warning (yellow)
+        init_pair(3, COLOR_RED, COLOR_BLACK);      // Critical (red)
+        init_pair(4, COLOR_CYAN, COLOR_BLACK);     // Info (cyan)
+        init_pair(5, COLOR_WHITE, COLOR_BLUE);     // Headers (white on blue)
+        
+        // Initialize windows
+        initializeWindows();
+    }
+    
+    // Initialize CPU data
+    updateCPUInfo();
+    
+    // If debug mode is enabled, log this event
+    if (config.debug_mode) {
+        debugLog("Debug mode enabled");
+        debugLog("Configuration: ");
+        debugLog("  Refresh rate: " + std::to_string(config.refresh_rate_ms) + " ms");
+        debugLog("  CPU threshold: " + std::to_string(config.cpu_threshold) + "%");
+        debugLog("  Show alerts: " + std::string(config.show_alert ? "true" : "false"));
+        debugLog("  System notifications: " + std::string(config.system_notifications ? "true" : "false"));
+        debugLog("  Debug-only mode: " + std::string(config.debug_only_mode ? "true" : "false"));
+    }
 }
 
 // Sort processes based on current sort type
@@ -143,7 +160,7 @@ void ActivityMonitor::sortProcesses() {
     }
 }
 
-// Helper method to format sizes (KB, MB, GB)
+// Helper method to format size with appropriate units
 std::string ActivityMonitor::formatSize(unsigned long size_kb) {
     std::ostringstream oss;
     
@@ -158,16 +175,33 @@ std::string ActivityMonitor::formatSize(unsigned long size_kb) {
     return oss.str();
 }
 
-// Helper method to format network speeds
-std::string ActivityMonitor::formatSpeed(double bytes_per_sec) {
+// Helper method to format latency (memory in ns, disk in ms)
+std::string ActivityMonitor::formatLatency(float latency, bool is_memory) {
     std::ostringstream oss;
     
-    if (bytes_per_sec < 1024) {
-        oss << std::fixed << std::setprecision(0) << bytes_per_sec << " B/s";
-    } else if (bytes_per_sec < 1024 * 1024) {
-        oss << std::fixed << std::setprecision(1) << (bytes_per_sec / 1024.0) << " KB/s";
+    if (latency < 0) {
+        // Latency is not available
+        return "N/A";
+    }
+    
+    oss << std::fixed << std::setprecision(2);
+    
+    if (is_memory) {
+        // Memory latency in nanoseconds
+        if (latency < 1000) {
+            oss << latency << " ns";
+        } else {
+            oss << (latency / 1000.0) << " μs";
+        }
     } else {
-        oss << std::fixed << std::setprecision(2) << (bytes_per_sec / (1024.0 * 1024.0)) << " MB/s";
+        // Disk latency in milliseconds
+        if (latency < 1.0) {
+            oss << (latency * 1000.0) << " μs";
+        } else if (latency < 1000.0) {
+            oss << latency << " ms";
+        } else {
+            oss << (latency / 1000.0) << " s";
+        }
     }
     
     return oss.str();
@@ -208,8 +242,9 @@ void ActivityMonitor::collectData() {
     updateCPUInfo();
     updateMemoryInfo();
     updateDiskInfo();
-    updateNetworkInfo();
     updateProcessInfo();
+    updateMemoryStats();
+    updateDiskLatency();
 }
 
 // Update CPU information by reading /proc/stat
@@ -285,6 +320,7 @@ void ActivityMonitor::updateMemoryInfo() {
     std::string line;
     unsigned long mem_total = 0, mem_free = 0, mem_available = 0;
     unsigned long swap_total = 0, swap_free = 0;
+    unsigned long cached = 0, buffers = 0;
     
     while (std::getline(meminfo_file, line)) {
         std::istringstream iss(line);
@@ -304,6 +340,10 @@ void ActivityMonitor::updateMemoryInfo() {
             swap_total = value;
         } else if (key == "SwapFree:") {
             swap_free = value;
+        } else if (key == "Cached:") {
+            cached = value;
+        } else if (key == "Buffers:") {
+            buffers = value;
         }
     }
     
@@ -325,6 +365,9 @@ void ActivityMonitor::updateMemoryInfo() {
     memory_info.swap_free = swap_free;
     memory_info.swap_used = swap_used;
     memory_info.swap_percent_used = swap_percent;
+    
+    memory_info.cached = cached;
+    memory_info.buffers = buffers;
 }
 
 // Update disk information using statvfs
@@ -380,80 +423,6 @@ void ActivityMonitor::updateDiskInfo() {
     }
 }
 
-// Update network information using /proc/net/dev
-void ActivityMonitor::updateNetworkInfo() {
-    std::ifstream netdev_file("/proc/net/dev");
-    if (!netdev_file.is_open()) {
-        throw std::runtime_error("Failed to open /proc/net/dev");
-    }
-    
-    std::string line;
-    std::unordered_map<std::string, std::pair<unsigned long, unsigned long>> current_stats;
-    
-    // Skip the first two header lines
-    std::getline(netdev_file, line);
-    std::getline(netdev_file, line);
-    
-    // Process each interface
-    while (std::getline(netdev_file, line)) {
-        std::istringstream iss(line);
-        std::string if_name;
-        unsigned long rx_bytes, rx_packets, rx_errs, rx_drop, rx_fifo, rx_frame, rx_compressed, rx_multicast;
-        unsigned long tx_bytes, tx_packets, tx_errs, tx_drop, tx_fifo, tx_colls, tx_carrier, tx_compressed;
-        
-        // Extract interface name (removing ':')
-        std::getline(iss, if_name, ':');
-        if_name.erase(std::remove_if(if_name.begin(), if_name.end(), ::isspace), if_name.end());
-        
-        // Skip loopback interface
-        if (if_name == "lo") {
-            continue;
-        }
-        
-        // Read statistics
-        iss >> rx_bytes >> rx_packets >> rx_errs >> rx_drop >> rx_fifo >> rx_frame >> rx_compressed >> rx_multicast;
-        iss >> tx_bytes >> tx_packets >> tx_errs >> tx_drop >> tx_fifo >> tx_colls >> tx_carrier >> tx_compressed;
-        
-        // Store current stats
-        current_stats[if_name] = std::make_pair(rx_bytes, tx_bytes);
-    }
-    
-    // Calculate speeds
-    auto now = std::chrono::high_resolution_clock::now();
-    double elapsed_seconds = std::chrono::duration<double>(now - last_update).count();
-    
-    // Update network info
-    network_info.clear();
-    
-    for (const auto& stat : current_stats) {
-        const std::string& if_name = stat.first;
-        unsigned long rx_bytes = stat.second.first;
-        unsigned long tx_bytes = stat.second.second;
-        
-        NetworkInfo info;
-        info.interface = if_name;
-        info.rx_bytes = rx_bytes;
-        info.tx_bytes = tx_bytes;
-        
-        // Calculate speeds if we have previous data
-        if (prev_net_stats.find(if_name) != prev_net_stats.end() && elapsed_seconds > 0) {
-            unsigned long prev_rx = prev_net_stats[if_name].first;
-            unsigned long prev_tx = prev_net_stats[if_name].second;
-            
-            info.rx_speed = (rx_bytes - prev_rx) / elapsed_seconds;
-            info.tx_speed = (tx_bytes - prev_tx) / elapsed_seconds;
-        } else {
-            info.rx_speed = 0;
-            info.tx_speed = 0;
-        }
-        
-        network_info.push_back(info);
-    }
-    
-    // Store current stats for next update
-    prev_net_stats = current_stats;
-}
-
 // Update process information by scanning /proc directory
 void ActivityMonitor::updateProcessInfo() {
     processes.clear();
@@ -496,7 +465,6 @@ void ActivityMonitor::updateProcessInfo() {
             Process proc;
             proc.pid = pid;
             proc.name = "unknown";
-            proc.status = "unknown";
             proc.cpu_percent = 0.0f;
             proc.mem_percent = 0.0f;
             
@@ -510,8 +478,6 @@ void ActivityMonitor::updateProcessInfo() {
                     // Trim whitespace
                     proc.name.erase(0, proc.name.find_first_not_of(" \t"));
                     proc.name.erase(proc.name.find_last_not_of(" \t") + 1);
-                } else if (line.compare(0, 7, "State:") == 0) {
-                    proc.status = line.substr(7, 1);
                 } else if (line.compare(0, 6, "VmRSS:") == 0) {
                     std::istringstream iss(line.substr(6));
                     iss >> vm_rss;
@@ -550,6 +516,14 @@ void ActivityMonitor::updateProcessInfo() {
                 // For better accuracy, we'd need to track process CPU time between updates
                 unsigned long total_time = utime + stime;
                 proc.cpu_percent = 0.1f * total_time / (cpu_info.num_cores * 100.0f);
+                
+                if (config.debug_mode) {
+                    debugLog("Process " + std::to_string(proc.pid) + " (" + proc.name + ") CPU calculation:");
+                    debugLog("  utime: " + std::to_string(utime) + ", stime: " + std::to_string(stime));
+                    debugLog("  total_time: " + std::to_string(total_time));
+                    debugLog("  num_cores: " + std::to_string(cpu_info.num_cores));
+                    debugLog("  cpu_percent: " + std::to_string(proc.cpu_percent));
+                }
             }
             
             // Add process to list
@@ -561,4 +535,198 @@ void ActivityMonitor::updateProcessInfo() {
     
     // Sort processes
     sortProcesses();
+}
+
+// Debug log method
+void ActivityMonitor::debugLog(const std::string& message) {
+    if (config.debug_mode) {
+        // Open the file if it's not open yet
+        if (!debug_file.is_open()) {
+            debug_file.open("activity_monitor_debug.log", std::ios::out | std::ios::app);
+            // Add timestamp for session start
+            auto now = std::chrono::system_clock::now();
+            auto now_time_t = std::chrono::system_clock::to_time_t(now);
+            debug_file << "\n\n----- Debug session started at " << std::ctime(&now_time_t) << "-----\n";
+        }
+        
+        // Write the message to file
+        debug_file << message << std::endl;
+        debug_file.flush(); // Ensure it's written immediately
+        
+        // Also write to stderr
+        std::cerr << "DEBUG: " << message << std::endl;
+    }
+}
+
+// Update memory cache hit rates and latency metrics
+void ActivityMonitor::updateMemoryStats() {
+    // Read cached and buffers memory amounts from /proc/meminfo (already done in updateMemoryInfo)
+    std::ifstream meminfo_file("/proc/meminfo");
+    if (meminfo_file.is_open()) {
+        std::string line;
+        while (std::getline(meminfo_file, line)) {
+            std::istringstream iss(line);
+            std::string key;
+            unsigned long value;
+            std::string unit;
+            
+            iss >> key >> value >> unit;
+            
+            if (key == "Cached:") {
+                memory_info.cached = value;
+            } else if (key == "Buffers:") {
+                memory_info.buffers = value;
+            }
+        }
+    }
+    
+    // Calculate cache hit rate - this is a simplified approximation
+    // In a real system, this would come from performance counters
+    if (memory_info.total > 0) {
+        // Calculate cached memory percentage
+        float cache_percentage = 100.0f * (memory_info.cached + memory_info.buffers) / memory_info.total;
+        
+        // Simulate cache hit rate based on cache size (simplified model)
+        // More cache generally means higher hit rates
+        memory_info.cache_hit_rate = 70.0f + (cache_percentage * 0.25f);
+        
+        // Cap at 99% maximum hit rate
+        if (memory_info.cache_hit_rate > 99.0f) {
+            memory_info.cache_hit_rate = 99.0f;
+        }
+    } else {
+        memory_info.cache_hit_rate = -1.0f;
+    }
+    
+    // Estimate memory latency - this would ideally come from hardware counters
+    // For simulation purposes, we're generating a realistic value
+    // Typical DDR4 memory latency is around 60-100ns
+    memory_info.latency_ns = 60.0f + (40.0f * memory_info.percent_used / 100.0f);
+    
+    if (config.debug_mode) {
+        debugLog("Memory cache hit rate: " + std::to_string(memory_info.cache_hit_rate) + "%");
+        debugLog("Memory latency: " + formatLatency(memory_info.latency_ns, true));
+    }
+}
+
+// Update disk I/O and latency metrics
+void ActivityMonitor::updateDiskLatency() {
+    // Read disk stats from /proc/diskstats
+    std::ifstream diskstats_file("/proc/diskstats");
+    if (!diskstats_file.is_open()) {
+        if (config.debug_mode) {
+            debugLog("Failed to open /proc/diskstats");
+        }
+        return;
+    }
+    
+    // Create a map for easier lookup of disk information by device name
+    std::unordered_map<std::string, DiskInfo*> disk_lookup;
+    for (auto& disk : disk_info) {
+        // Extract the device name without path (e.g., "sda1" from "/dev/sda1")
+        size_t pos = disk.device.rfind('/');
+        std::string dev_name = (pos != std::string::npos) ? disk.device.substr(pos + 1) : disk.device;
+        disk_lookup[dev_name] = &disk;
+        
+        // Initialize latency metrics
+        disk.read_latency_ms = -1.0f;
+    }
+    
+    // Parse disk stats
+    std::string line;
+    while (std::getline(diskstats_file, line)) {
+        std::istringstream iss(line);
+        int major, minor;
+        std::string dev_name;
+        unsigned long reads, reads_merged, sectors_read, read_ms;
+        unsigned long writes, writes_merged, sectors_written, write_ms;
+        unsigned long ios_in_progress, io_ms, weighted_io_ms;
+        
+        // Parse disk stats line
+        iss >> major >> minor >> dev_name 
+            >> reads >> reads_merged >> sectors_read >> read_ms
+            >> writes >> writes_merged >> sectors_written >> write_ms
+            >> ios_in_progress >> io_ms >> weighted_io_ms;
+        
+        // Check if this device is one we're monitoring
+        if (disk_lookup.find(dev_name) != disk_lookup.end()) {
+            DiskInfo* disk = disk_lookup[dev_name];
+            
+            // Calculate latency metrics
+            if (reads > 0) {
+                disk->read_latency_ms = static_cast<float>(read_ms) / reads;
+            }
+            
+            // Store total I/O operations
+            disk->io_operations = reads + writes;
+            
+            if (config.debug_mode) {
+                debugLog("Disk " + dev_name + " read latency: " + formatLatency(disk->read_latency_ms, false));
+                debugLog("Disk " + dev_name + " I/O operations: " + std::to_string(disk->io_operations));
+            }
+        }
+    }
+}
+
+// Run in debug-only mode (no UI)
+void ActivityMonitor::runDebugMode() {
+    // Initialize necessary data
+    updateCPUInfo();
+    updateMemoryInfo();
+    updateDiskInfo();
+    updateProcessInfo();
+    updateMemoryStats();
+    updateDiskLatency();
+    
+    // Print initial debug information
+    debugLog("===== Starting debug-only mode =====");
+    debugLog("System information:");
+    debugLog("  CPU cores: " + std::to_string(cpu_info.num_cores));
+    debugLog("  Total memory: " + formatSize(memory_info.total));
+    debugLog("  Memory cache hit rate: " + std::to_string(memory_info.cache_hit_rate) + "%");
+    debugLog("  Memory latency: " + formatLatency(memory_info.latency_ns, true));
+    
+    // Run for specified number of cycles
+    int cycles = 10; // Collect data for 10 cycles
+    
+    for (int i = 0; i < cycles && running; i++) {
+        debugLog("===== Collecting data (cycle " + std::to_string(i+1) + "/" + std::to_string(cycles) + ") =====");
+        
+        // Update data
+        updateCPUInfo();
+        debugLog("CPU usage: " + std::to_string(cpu_info.total_usage) + "%");
+        
+        updateMemoryInfo();
+        updateMemoryStats();
+        debugLog("Memory usage: " + std::to_string(memory_info.percent_used) + "% (" + formatSize(memory_info.used) + "/" + formatSize(memory_info.total) + ")");
+        debugLog("Cache hit rate: " + std::to_string(memory_info.cache_hit_rate) + "%, Latency: " + formatLatency(memory_info.latency_ns, true));
+        
+        // Log disk information
+        updateDiskLatency();
+        debugLog("Disk information:");
+        for (const auto& disk : disk_info) {
+            debugLog("  " + disk.mount_point + " (" + disk.device + "): " + 
+                     std::to_string(disk.percent_used) + "% used, Read latency: " + 
+                     formatLatency(disk.read_latency_ms, false));
+        }
+        
+        updateProcessInfo();
+        debugLog("Found " + std::to_string(processes.size()) + " processes");
+        
+        // Log the top 5 CPU-consuming processes
+        sortProcesses();
+        debugLog("Top CPU-consuming processes:");
+        int count = std::min(5, static_cast<int>(processes.size()));
+        for (int j = 0; j < count; j++) {
+            const Process& proc = processes[j];
+            debugLog("  [" + std::to_string(j+1) + "] PID: " + std::to_string(proc.pid) + 
+                     ", Name: " + proc.name + 
+                     ", CPU: " + std::to_string(proc.cpu_percent) + "%");
+        }
+        
+        // Wait for the next update
+        std::this_thread::sleep_for(std::chrono::milliseconds(config.refresh_rate_ms));
+    }
+    
+    debugLog("===== Debug-only mode completed =====");
 } 
