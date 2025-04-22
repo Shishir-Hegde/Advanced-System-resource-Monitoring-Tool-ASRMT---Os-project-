@@ -18,16 +18,8 @@ A terminal-based graphical system activity monitor for Ubuntu Linux, similar to 
 
 ## Screenshots
 
-```
-+--------------------------------------+
-| CPU Usage                            |
-| Total: [||||||||||||||||||| 78.5%  ] |
-| Core0: [||||||||||||||||||| 82.1%  ] |
-| Core1: [||||||||||||||     67.2%  ] |
-| Core2: [|||||||||||||||||| 76.3%  ] |
-| Core3: [|||||||||||||||||| 79.0%  ] |
-+--------------------------------------+
-```
+![image](https://github.com/user-attachments/assets/d4f45ebb-52e9-4f06-9b18-fc5b552f3e8d)
+
 
 ## Dependencies
 

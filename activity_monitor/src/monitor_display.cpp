@@ -3,29 +3,25 @@
 #include <iomanip>
 #include <thread>
 
-// Display CPU information
+// Show CPU stats
 void ActivityMonitor::displayCPUInfo() {
     wclear(cpu_win);
     box(cpu_win, 0, 0);
     
-    // Get window size
     int height, width;
     getmaxyx(cpu_win, height, width);
     
-    // Draw header
     wattron(cpu_win, COLOR_PAIR(5));
     mvwprintw(cpu_win, 0, 2, " CPU Usage ");
     wattroff(cpu_win, COLOR_PAIR(5));
     
-    // Draw total CPU usage bar
     mvwprintw(cpu_win, 1, 2, "Total:");
     
-    // Choose color based on usage
-    int color = 1; // default green
+    int color = 1;
     if (cpu_info.total_usage > config.cpu_threshold) {
-        color = 3; // red for over threshold
+        color = 3;
     } else if (cpu_info.total_usage > 60.0f) {
-        color = 2; // yellow for medium usage
+        color = 2;
     }
     
     wattron(cpu_win, COLOR_PAIR(color));
@@ -33,17 +29,15 @@ void ActivityMonitor::displayCPUInfo() {
     mvwprintw(cpu_win, 1, 10, "%s", bar.c_str());
     wattroff(cpu_win, COLOR_PAIR(color));
     
-    // Draw CPU cores
     int cores_to_show = std::min(static_cast<int>(cpu_info.core_usage.size()), height - 3);
     for (int i = 0; i < cores_to_show; i++) {
         float usage = cpu_info.core_usage[i];
         
-        // Choose color based on usage
-        color = 1; // default green
+        color = 1;
         if (usage > config.cpu_threshold) {
-            color = 3; // red for over threshold
+            color = 3;
         } else if (usage > 60.0f) {
-            color = 2; // yellow for medium usage
+            color = 2;
         }
         
         mvwprintw(cpu_win, i + 2, 2, "Core%2d:", i);
@@ -56,36 +50,31 @@ void ActivityMonitor::displayCPUInfo() {
     wrefresh(cpu_win);
 }
 
-// Display memory information
+// Show memory stats
 void ActivityMonitor::displayMemoryInfo() {
     wclear(mem_win);
     box(mem_win, 0, 0);
     
-    // Get window size
     int width;
     getmaxyx(mem_win, std::ignore, width);
     
-    // Draw header
     wattron(mem_win, COLOR_PAIR(5));
     mvwprintw(mem_win, 0, 2, " Memory Performance ");
     wattroff(mem_win, COLOR_PAIR(5));
     
-    // Choose color based on usage
-    int color = 1; // default green
+    int color = 1;
     if (memory_info.percent_used > 90.0f) {
-        color = 3; // red for high usage
+        color = 3;
     } else if (memory_info.percent_used > 70.0f) {
-        color = 2; // yellow for medium usage
+        color = 2;
     }
     
-    // Print RAM usage
     mvwprintw(mem_win, 2, 2, "RAM:");
     wattron(mem_win, COLOR_PAIR(color));
     std::string bar = createBar(memory_info.percent_used, width - 8, false);
     mvwprintw(mem_win, 2, 8, "%s", bar.c_str());
     wattroff(mem_win, COLOR_PAIR(color));
     
-    // Print RAM details
     std::string total = formatSize(memory_info.total);
     std::string used = formatSize(memory_info.used);
     std::string free = formatSize(memory_info.available);
@@ -96,7 +85,6 @@ void ActivityMonitor::displayMemoryInfo() {
     mvwprintw(mem_win, 4, 2, "Used : %s", used.c_str());
     mvwprintw(mem_win, 5, 2, "Free : %s", free.c_str());
     
-    // Performance metrics section with highlight box
     wattron(mem_win, COLOR_PAIR(5));
     mvwprintw(mem_win, 6, 2, "===== Performance Metrics =====");
     wattroff(mem_win, COLOR_PAIR(5));
@@ -104,21 +92,18 @@ void ActivityMonitor::displayMemoryInfo() {
     mvwprintw(mem_win, 7, 2, "Cache: %s", cached.c_str());
     mvwprintw(mem_win, 8, 2, "Buffr: %s", buffers.c_str());
     
-    // Display memory performance metrics with enhanced visibility
     if (memory_info.cache_hit_rate > 0) {
-        // Calculate color based on hit rate
-        int hit_color = 1; // default green
+        int hit_color = 1;
         if (memory_info.cache_hit_rate < 80.0f) {
-            hit_color = 3; // red for low hit rate
+            hit_color = 3;
         } else if (memory_info.cache_hit_rate < 90.0f) {
-            hit_color = 2; // yellow for medium hit rate
+            hit_color = 2;
         }
         
         wattron(mem_win, COLOR_PAIR(hit_color) | A_BOLD);
         mvwprintw(mem_win, 9, 2, "Hit Rate: %.1f%%", memory_info.cache_hit_rate);
         wattroff(mem_win, COLOR_PAIR(hit_color) | A_BOLD);
         
-        // Draw a small hit rate bar
         int hit_width = 20;
         int filled = static_cast<int>(hit_width * memory_info.cache_hit_rate / 100.0);
         mvwprintw(mem_win, 9, 18, "[");
@@ -132,33 +117,29 @@ void ActivityMonitor::displayMemoryInfo() {
         mvwprintw(mem_win, 9, 2, "Hit Rate: N/A");
     }
     
-    // Display memory latency with enhanced visibility
     std::string latency = formatLatency(memory_info.latency_ns, true);
     
-    // Choose color based on latency (lower is better)
-    int latency_color = 1; // default green
+    int latency_color = 1;
     if (memory_info.latency_ns > 100.0f) {
-        latency_color = 3; // red for high latency
+        latency_color = 3;
     } else if (memory_info.latency_ns > 80.0f) {
-        latency_color = 2; // yellow for medium latency
+        latency_color = 2;
     }
     
     wattron(mem_win, COLOR_PAIR(latency_color) | A_BOLD);
     mvwprintw(mem_win, 10, 2, "Latency: %s", latency.c_str());
     wattroff(mem_win, COLOR_PAIR(latency_color) | A_BOLD);
     
-    // Print swap usage if available
     if (memory_info.swap_total > 0) {
         wattron(mem_win, COLOR_PAIR(5));
         mvwprintw(mem_win, 12, 2, "===== Swap Memory =====");
         wattroff(mem_win, COLOR_PAIR(5));
         
-        // Choose color based on swap usage
-        color = 1; // default green
+        color = 1;
         if (memory_info.swap_percent_used > 50.0f) {
-            color = 3; // red for high usage
+            color = 3;
         } else if (memory_info.swap_percent_used > 25.0f) {
-            color = 2; // yellow for medium usage
+            color = 2;
         }
         
         mvwprintw(mem_win, 13, 2, "Swap:");
@@ -179,25 +160,21 @@ void ActivityMonitor::displayMemoryInfo() {
     wrefresh(mem_win);
 }
 
-// Display disk information
+// Show disk stats
 void ActivityMonitor::displayDiskInfo() {
     wclear(disk_win);
     box(disk_win, 0, 0);
     
-    // Get window size
     int height, width;
     getmaxyx(disk_win, height, width);
     
-    // Draw header
     wattron(disk_win, COLOR_PAIR(5));
     mvwprintw(disk_win, 0, 2, " Disk Performance ");
     wattroff(disk_win, COLOR_PAIR(5));
     
-    // Show disk information
-    int max_disks = height - 4; // Reduced to allow for header and footer
+    int max_disks = height - 4;
     int disks_shown = 0;
     
-    // Draw header row
     wattron(disk_win, A_BOLD);
     mvwprintw(disk_win, 1, 2, "Mount      Usage    Read Latency");
     wattroff(disk_win, A_BOLD);
@@ -205,38 +182,32 @@ void ActivityMonitor::displayDiskInfo() {
     for (size_t i = 0; i < disk_info.size() && disks_shown < max_disks; i++) {
         const DiskInfo& disk = disk_info[i];
         
-        // Create a shorter mount point display
         std::string mount = disk.mount_point;
         if (mount.length() > 8) {
             mount = mount.substr(0, 7) + "+";
         }
         
-        // Choose color based on usage
-        int color = 1; // default green
+        int color = 1;
         if (disk.percent_used > 90.0f) {
-            color = 3; // red for high usage
+            color = 3;
         } else if (disk.percent_used > 70.0f) {
-            color = 2; // yellow for medium usage
+            color = 2;
         }
         
-        // Show disk information
         mvwprintw(disk_win, disks_shown + 2, 2, "%-8s", mount.c_str());
         
-        // Create a visual percentage bar (now with more space for read latency)
         wattron(disk_win, COLOR_PAIR(color));
         std::string bar = createBar(disk.percent_used, 20, false);
         mvwprintw(disk_win, disks_shown + 2, 11, "%s", bar.c_str());
         wattroff(disk_win, COLOR_PAIR(color));
         
-        // Show read latency information
         std::string read_latency = formatLatency(disk.read_latency_ms, false);
         
-        // Choose color based on read latency
-        int read_color = 1; // default green
+        int read_color = 1;
         if (disk.read_latency_ms > 30.0f) {
-            read_color = 3; // red for high latency
+            read_color = 3;
         } else if (disk.read_latency_ms > 10.0f) {
-            read_color = 2; // yellow for medium latency
+            read_color = 2;
         }
         
         wattron(disk_win, COLOR_PAIR(read_color) | A_BOLD);
@@ -246,7 +217,6 @@ void ActivityMonitor::displayDiskInfo() {
         disks_shown++;
     }
     
-    // Add a simple key/legend at the bottom
     if (height > 6) {
         wattron(disk_win, A_BOLD);
         mvwprintw(disk_win, height - 2, 2, "Latency Key:");

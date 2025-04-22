@@ -13,25 +13,19 @@
 #include <iostream>
 #include <sys/types.h>
 
-// Constructor
+// Initialize monitor
 ActivityMonitor::ActivityMonitor() {
-    // Set default values
     last_update = std::chrono::high_resolution_clock::now();
-    last_notification = last_update;  // Initialize notification timer
-    
-    // Until setConfig is called, we don't know if we're in debug-only mode
+    last_notification = last_update;
 }
 
-// Destructor
+// Cleanup resources
 ActivityMonitor::~ActivityMonitor() {
-    // Close debug file if open
     if (debug_file.is_open()) {
         debug_file.close();
     }
     
-    // Only clean up ncurses if we're not in debug-only mode
     if (!config.debug_only_mode) {
-        // Clean up windows
         delwin(cpu_win);
         delwin(mem_win);
         delwin(disk_win);
@@ -41,46 +35,38 @@ ActivityMonitor::~ActivityMonitor() {
             delwin(alert_win);
         }
         
-        // End ncurses
         endwin();
     }
 }
 
-// Initialize the windows
+// Setup display windows
 void ActivityMonitor::initializeWindows() {
     int height, width;
     getmaxyx(stdscr, height, width);
     
-    // Calculate dimensions for each window
     int cpu_height = height / 4;
     int mem_height = height / 4;
     int disk_height = height / 4;
     int process_height = height / 2;
     
-    // Create windows
     cpu_win = newwin(cpu_height, width, 0, 0);
     mem_win = newwin(mem_height, width / 2, cpu_height, 0);
     disk_win = newwin(disk_height, width / 2, cpu_height, width / 2);
     process_win = newwin(process_height, width, height - process_height, 0);
     
-    // Create alert window (initially hidden)
     alert_win = nullptr;
-    
-    // Enable scrolling for process window
     scrollok(process_win, TRUE);
 }
 
-// Resize windows when terminal size changes
+// Handle terminal resize
 void ActivityMonitor::resizeWindows() {
     int new_height, new_width;
     getmaxyx(stdscr, new_height, new_width);
     
-    // Check if terminal size has changed
     if (new_height != terminal_height || new_width != terminal_width) {
         terminal_height = new_height;
         terminal_width = new_width;
         
-        // Delete old windows
         delwin(cpu_win);
         delwin(mem_win);
         delwin(disk_win);
@@ -91,47 +77,38 @@ void ActivityMonitor::resizeWindows() {
             alert_win = nullptr;
         }
         
-        // Recreate windows with new dimensions
         initializeWindows();
-        
-        // Force full redraw
         clear();
         refresh();
     }
 }
 
-// Set configuration
+// Apply configuration
 void ActivityMonitor::setConfig(const MonitorConfig& new_config) {
     config = new_config;
     
-    // Initialize ncurses if not in debug-only mode
     if (!config.debug_only_mode) {
         initscr();
         start_color();
         cbreak();
         noecho();
         keypad(stdscr, TRUE);
-        curs_set(0);  // Hide cursor
-        timeout(0);   // Non-blocking input
+        curs_set(0);
+        timeout(0);
         
-        // Get terminal dimensions
         getmaxyx(stdscr, terminal_height, terminal_width);
         
-        // Initialize colors
-        init_pair(1, COLOR_GREEN, COLOR_BLACK);    // Normal (green)
-        init_pair(2, COLOR_YELLOW, COLOR_BLACK);   // Warning (yellow)
-        init_pair(3, COLOR_RED, COLOR_BLACK);      // Critical (red)
-        init_pair(4, COLOR_CYAN, COLOR_BLACK);     // Info (cyan)
-        init_pair(5, COLOR_WHITE, COLOR_BLUE);     // Headers (white on blue)
+        init_pair(1, COLOR_GREEN, COLOR_BLACK);
+        init_pair(2, COLOR_YELLOW, COLOR_BLACK);
+        init_pair(3, COLOR_RED, COLOR_BLACK);
+        init_pair(4, COLOR_CYAN, COLOR_BLACK);
+        init_pair(5, COLOR_WHITE, COLOR_BLUE);
         
-        // Initialize windows
         initializeWindows();
     }
     
-    // Initialize CPU data
     updateCPUInfo();
     
-    // If debug mode is enabled, log this event
     if (config.debug_mode) {
         debugLog("Debug mode enabled");
         debugLog("Configuration: ");
@@ -143,16 +120,14 @@ void ActivityMonitor::setConfig(const MonitorConfig& new_config) {
     }
 }
 
-// Sort processes based on current sort type
+// Sort process list
 void ActivityMonitor::sortProcesses() {
     if (process_sort_type == 0) {
-        // Sort by CPU usage (descending)
         std::sort(processes.begin(), processes.end(), 
             [](const Process& a, const Process& b) { 
                 return a.cpu_percent > b.cpu_percent; 
             });
     } else {
-        // Sort by Memory usage (descending)
         std::sort(processes.begin(), processes.end(), 
             [](const Process& a, const Process& b) { 
                 return a.mem_percent > b.mem_percent; 
@@ -160,7 +135,7 @@ void ActivityMonitor::sortProcesses() {
     }
 }
 
-// Helper method to format size with appropriate units
+// Format size with units
 std::string ActivityMonitor::formatSize(unsigned long size_kb) {
     std::ostringstream oss;
     
@@ -175,26 +150,23 @@ std::string ActivityMonitor::formatSize(unsigned long size_kb) {
     return oss.str();
 }
 
-// Helper method to format latency (memory in ns, disk in ms)
+// Format latency value
 std::string ActivityMonitor::formatLatency(float latency, bool is_memory) {
     std::ostringstream oss;
     
     if (latency < 0) {
-        // Latency is not available
         return "N/A";
     }
     
     oss << std::fixed << std::setprecision(2);
     
     if (is_memory) {
-        // Memory latency in nanoseconds
         if (latency < 1000) {
             oss << latency << " ns";
         } else {
             oss << (latency / 1000.0) << " μs";
         }
     } else {
-        // Disk latency in milliseconds
         if (latency < 1.0) {
             oss << (latency * 1000.0) << " μs";
         } else if (latency < 1000.0) {
@@ -207,12 +179,11 @@ std::string ActivityMonitor::formatLatency(float latency, bool is_memory) {
     return oss.str();
 }
 
-// Create a progress bar
+// Create progress bar
 std::string ActivityMonitor::createBar(float percent, int width, bool use_color) {
-    // use_color parameter is currently unused, but kept for future enhancements
-    (void)use_color; // Suppress unused parameter warning
+    (void)use_color;
     
-    int bar_width = width - 7; // Leave space for percentage
+    int bar_width = width - 7;
     int fill_width = static_cast<int>(bar_width * percent / 100.0);
     
     std::string bar = "[";
@@ -225,19 +196,17 @@ std::string ActivityMonitor::createBar(float percent, int width, bool use_color)
     }
     bar += "]";
     
-    // Add percentage
     std::ostringstream oss;
     oss << std::fixed << std::setprecision(1) << percent << "%";
     std::string percent_str = oss.str();
     
-    // Insert percentage in the middle of the bar
     int pos = bar.length() / 2 - percent_str.length() / 2;
     bar.replace(pos, percent_str.length(), percent_str);
     
     return bar;
 }
 
-// Collect all system data
+// Update all system data
 void ActivityMonitor::collectData() {
     updateCPUInfo();
     updateMemoryInfo();

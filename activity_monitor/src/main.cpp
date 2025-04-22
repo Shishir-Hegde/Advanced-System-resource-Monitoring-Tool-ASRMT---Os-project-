@@ -2,6 +2,7 @@
 #include <iostream>
 #include <getopt.h>
 
+// Show usage info
 void printUsage(const char* programName) {
     std::cout << "Usage: " << programName << " [OPTIONS]\n"
               << "Terminal-based activity monitor for system resources.\n\n"
@@ -16,10 +17,10 @@ void printUsage(const char* programName) {
               << std::endl;
 }
 
+// Main entry point
 int main(int argc, char* argv[]) {
     MonitorConfig config;
     
-    // Define long options
     static struct option long_options[] = {
         {"refresh-rate", required_argument, 0, 'r'},
         {"threshold",    required_argument, 0, 't'},
@@ -31,7 +32,6 @@ int main(int argc, char* argv[]) {
         {0, 0, 0, 0}
     };
     
-    // Parse command line options
     int opt;
     int option_index = 0;
     
@@ -61,7 +61,7 @@ int main(int argc, char* argv[]) {
                 config.debug_mode = true;
                 break;
             case 'o':
-                config.debug_mode = true;     // Debug-only mode implies debug mode
+                config.debug_mode = true;
                 config.debug_only_mode = true;
                 break;
             case 'h':
@@ -74,20 +74,15 @@ int main(int argc, char* argv[]) {
     }
     
     try {
-        // Create and configure the activity monitor
         ActivityMonitor monitor;
         monitor.setConfig(config);
         
-        // Run the monitor
         if (config.debug_only_mode) {
-            // Skip ncurses initialization in debug-only mode
             monitor.runDebugMode();
         } else {
-            // Run regular UI mode
             monitor.run();
         }
     } catch (const std::exception& e) {
-        // Make sure we exit ncurses mode before displaying any errors
         if (!config.debug_only_mode) {
             endwin();
         }
